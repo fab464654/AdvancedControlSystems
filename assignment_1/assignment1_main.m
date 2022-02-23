@@ -7,6 +7,9 @@ addpath("../myFunctions/")
 %Import URDF file
 robot = importrobot('../URDF/PRP_2.urdf');
 
+%Load the robot's information
+loadMyRobotStruct;
+
 %Show information about the structure
 showdetails(robot)
 
@@ -18,25 +21,23 @@ config(2).JointPosition = pi/3;
 config(3).JointPosition = -0.14;    
 % showRobot(robot, config);
 
-jointLimits = [-0.2 0.2;
-               -pi  pi ;
-               -0.2 0.2];
+jointLimits = myRobot.jointLimits;
 
-%%
+%% IMPORTANT: the user MUST choose the overall ref. wrt ∑0 or ∑base!!!
+refFrame = "0";  % ∑0 = "0"; ∑base = "base"
+
 %Initialize the DH table
 syms L0 L2 L3 L4 d1(t) theta2(t) d3(t) t
-%L2 = length of Link2 = 0.4m
-%L3 = length of Link3 = 0.3m
-%L4 = length of Link4 = 0.4m
-DH_table = [0   -pi/2   L0           -pi/2     ;
-            0   0       d1(t)+L2/2   0         ;   
-            0   pi/2    L3         theta2(t) ;
-            0   -pi     d3(t)-L4/2   pi/2     ];
+if strcmp(refFrame, "0")
+    DH_table = myRobot.DH_table_zero; 
+elseif strcmp(refFrame, "base")
+    DH_table = myRobot.DH_table_base; 
+end
 
 %Compute Direct and Inverse kinematics (+ Jacobians)
-jointStructure = ["P","R","P"]; 
+jointStructure = myRobot.jointStructure;
 
-[T, T_all, Ja, Jg, ik_joints] = computeKinematics(DH_table, jointStructure);
+[T, T_all, Ja, Jg, ik_joints] = computeKinematics(DH_table, jointStructure, refFrame);
 
 %To get LaTeX code for matrices
 % fprintf("\nLaTeX equivalent code...\n")
@@ -51,7 +52,12 @@ jointStructure = ["P","R","P"];
 
 
 %Check the direct kinematics computation
-[toolbox_dk, my_dk, toolbox_ee_pose, my_ee_pose] = checkDirectKinematics(robot, config, T);
+if strcmp(refFrame, "0")
+    DH_table = myRobot.DH_table_zero; 
+elseif strcmp(refFrame, "base")
+    DH_table = myRobot.DH_table_base; 
+end
+[toolbox_dk, my_dk, toolbox_ee_pose, my_ee_pose] = checkDirectKinematics(robot, config, T, refFrame);
 fprintf("\n------------------\n");
 fprintf("[CheckDirect] Checking the direct kinematics computation, considering "+...
         "the given joint configuration\n");
@@ -78,7 +84,7 @@ for i=1:numTries
     %limtis!!!
     randomConf = getRandomConfigurationRight(robot, jointLimits); %my function!
     
-    [~, ~, goalPose, ~] = checkDirectKinematics(robot, randomConf, T);
+    [~, ~, goalPose, ~] = checkDirectKinematics(robot, randomConf, T, refFrame);
     my_joints = checkInverseKinematics(goalPose, ik_joints);
 
     %There could be multiple IK solutions
@@ -93,7 +99,7 @@ for i=1:numTries
             currentConf(2).JointPosition = double(my_joints(k,2));
             currentConf(3).JointPosition = double(my_joints(k,3));
 
-            [~, ~, computedPoseFromJointParams, ~] = checkDirectKinematics(robot, currentConf, T);
+            [~, ~, computedPoseFromJointParams, ~] = checkDirectKinematics(robot, currentConf, T, refFrame);
             fprintf("[CheckInverse] Direct kinematics from the (%d) joint params -> [%.3f %.3f %.3f]\n", k, computedPoseFromJointParams);
 
             maxScore = maxScore + 1;
@@ -111,44 +117,88 @@ fprintf("------------------\n");
 
 
 %Check the Geometric Jacobian
-fprintf("\n------------------\n");
-fprintf("Checking the Geometric Jacobian...\n");
-fprintf("Considered Robot configuration -> [%.2f %.2f %.2f]\n", config.JointPosition);
-Jg_toolbox = getGeometricJacobianRight(robot, config, "ee");
-fprintf("\nToolbox Jg:\n");
-disp(Jg_toolbox)
+if strcmp(refFrame, "0")
+    fprintf("\n------------------\n");
+    fprintf("Considered Robot configuration -> [%.2f %.2f %.2f]\n", config.JointPosition);
+    Jg_toolbox_base = getGeometricJacobianRight(robot, config, "ee");
+    
+    T_base_to_0 = myRobot.T_base_to_0_DH; %retrive (DH) transf. from ∑base to ∑0
+    T_0_to_base = inv(T_base_to_0);
+    R_0_to_base = T_0_to_base(1:3,1:3);
+    T_jacobians = [R_0_to_base  , zeros(3)  ;
+                   zeros(3)     , R_0_to_base    ];
 
-fprintf("Computed Jg:\n");
-Jg_computed = vpa(subs(Jg, [L0 L2 L3 L4 d1(t) theta2(t) d3(t)], [0.4,0.4,0.3,0.4,config.JointPosition]), 5);
-disp(Jg_computed)
-fprintf("------------------\n");
+    Jg_toolbox_zero = vpa(subs(T_jacobians*Jg_toolbox_base, [L0],[0.4]), 3);
+    fprintf("\nToolbox Jg wrt ∑0:\n");
+    disp(Jg_toolbox_zero)
+    
+    fprintf("Computed Jg wrt ∑0:\n");
+    Jg_computed = vpa(subs(Jg, [L0 L2 L3 L4 d1(t) theta2(t) d3(t)], [0.4,0.4,0.3,0.4,config.JointPosition]), 5);
+    disp(Jg_computed)
+    fprintf("------------------\n");
 
+elseif strcmp(refFrame, "base")
+    fprintf("\n------------------\n");
+    fprintf("Checking the Geometric Jacobian...\n");
+    fprintf("Considered Robot configuration -> [%.2f %.2f %.2f]\n", config.JointPosition);
+    Jg_toolbox = getGeometricJacobianRight(robot, config, "ee");
+    fprintf("\nToolbox Jg:\n");
+    disp(Jg_toolbox)
 
-%% Compute transformation matrix between Jg and Ja (base_link -> ee frames)
+    fprintf("Computed Jg:\n");
+    Jg_computed = vpa(subs(Jg, [L0 L2 L3 L4 d1(t) theta2(t) d3(t)], [0.4,0.4,0.3,0.4,config.JointPosition]), 5);
+    disp(Jg_computed)
+    fprintf("------------------\n");
+end
+
+%% Compute transformation matrix between Jg and Ja (base_link/∑0 -> ee frames)
 %Formula: Jg = Ta(phi) * Ja_complete
-R = getTransform(robot,config,"ee","base_link");
-R = R(1:3, 1:3);
-eulerAngles = rotm2eul(R,"ZYZ");
+if strcmp(refFrame, "0")
+    R = T_all(1:3, 1:3, 3);
+    R = eval(vpa(subs(R, [L0 L2 L3 L4 d1(t) theta2(t) d3(t)], [0.4,0.4,0.3,0.4,config.JointPosition]), 5));
+    eulerAngles = rotm2eul(R,"ZYZ");
 
-phi   = eulerAngles(1);
-theta = eulerAngles(2);
-psi   = eulerAngles(3);
+    phi   = eulerAngles(1);
+    theta = eulerAngles(2);
+    psi   = eulerAngles(3);
 
-T_phi = [0 -sin(phi) cos(phi)*sin(theta);
-         0  cos(phi) sin(phi)*sin(theta);
-         1     0     cos(theta)        ];
+    T_phi = [0 -sin(phi) cos(phi)*sin(theta);
+             0  cos(phi) sin(phi)*sin(theta);
+             1     0     cos(theta)        ];
 
-Ta = [1 0 0     0 0 0     ;
-      0 1 0     0 0 0     ;
-      0 0 1     0 0 0     ;
-      0 0 0   , T_phi(1,:);
-      0 0 0   , T_phi(2,:);
-      0 0 0   , T_phi(3,:)];
-  
-Ja_complete = symSubsZeros(inv(Ta)*Jg, 0.00001);
-disp("Ja_complete computed from inv(Ta)*Jg:"); disp(Ja_complete);
-% fprintf('%s\n', getLatexEquation("J_{a}", Ja_complete));
+    Ta = [1 0 0     0 0 0     ;
+          0 1 0     0 0 0     ;
+          0 0 1     0 0 0     ;
+          0 0 0   , T_phi(1,:);
+          0 0 0   , T_phi(2,:);
+          0 0 0   , T_phi(3,:)];
 
+    Ja_complete = symSubsZeros(inv(Ta)*Jg, 0.00001);
+    disp("Ja_complete (wrt ∑0) computed from inv(Ta)*Jg:"); disp(Ja_complete);
+    % fprintf('%s\n', getLatexEquation("J_{a}", Ja_complete));
+elseif strcmp(refFrame, "base")
+    R = getTransform(robot,config,"ee","base_link");
+    R = R(1:3, 1:3);
+    eulerAngles = rotm2eul(R,"ZYZ");
 
+    phi   = eulerAngles(1);
+    theta = eulerAngles(2);
+    psi   = eulerAngles(3);
+
+    T_phi = [0 -sin(phi) cos(phi)*sin(theta);
+             0  cos(phi) sin(phi)*sin(theta);
+             1     0     cos(theta)        ];
+
+    Ta = [1 0 0     0 0 0     ;
+          0 1 0     0 0 0     ;
+          0 0 1     0 0 0     ;
+          0 0 0   , T_phi(1,:);
+          0 0 0   , T_phi(2,:);
+          0 0 0   , T_phi(3,:)];
+
+    Ja_complete = symSubsZeros(inv(Ta)*Jg, 0.00001);
+    disp("Ja_complete (wrt ∑base) computed from inv(Ta)*Jg:"); disp(Ja_complete);
+    % fprintf('%s\n', getLatexEquation("J_{a}", Ja_complete));
+end
 
 
