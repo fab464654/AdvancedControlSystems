@@ -16,11 +16,12 @@ showdetails(robot)
 %Show 3DOF PRP robot
 config = homeConfiguration(robot);
 %Set a specific configuration
-config(1).JointPosition = 0.1;
+config(1).JointPosition = 0.11;
 config(2).JointPosition = pi/3;
-config(3).JointPosition = -0.14;    
-% showRobot(robot, config);
-
+config(3).JointPosition = -0.14;   
+% config(2).JointPosition = pi/3; 
+show(robot, config);
+% [0.173 -0.100 0.500]
 jointLimits = myRobot.jointLimits;
 
 %% IMPORTANT: the user MUST choose the overall ref. wrt ∑0 or ∑base!!!
@@ -40,14 +41,18 @@ jointStructure = myRobot.jointStructure;
 [T, T_all, Ja, Jg, ik_joints] = computeKinematics(DH_table, jointStructure, refFrame);
 
 %To get LaTeX code for matrices
-% fprintf("\nLaTeX equivalent code...\n")
-% fprintf("--------------------------\n")
-% fprintf('%s\n', getLatexEquation("A_1^0", T_all(:,:,1)));
-% fprintf('%s\n', getLatexEquation("A_2^0", T_all(:,:,2)));
-% fprintf('%s\n', getLatexEquation("A_3^0", T_all(:,:,3)));
-% fprintf('%s\n', getLatexEquation("A_4^0", T));
-% fprintf('%s\n', getLatexEquation("J_{g}", Jg));
-% fprintf("--------------------------\n\n")
+fprintf("\nLaTeX equivalent code...\n")
+fprintf("--------------------------\n")
+% fprintf('%s\n', getLatexEquation("T_1^0", T_all(:,:,1)));
+% fprintf('%s\n', getLatexEquation("T_2^0", T_all(:,:,2)));
+% fprintf('%s\n', getLatexEquation("T_3^0", T_all(:,:,3)));
+% fprintf('%s\n', getLatexEquation("T_ee^0", T));
+fprintf('%s\n', getLatexEquation("T_0^{base}", T_all(:,:,1)));
+fprintf('%s\n', getLatexEquation("T_1^{base}", T_all(:,:,2)));
+fprintf('%s\n', getLatexEquation("T_2^{base}", T_all(:,:,3)));
+fprintf('%s\n', getLatexEquation("T_3^{base}", T));
+fprintf('%s\n', getLatexEquation("J_{g}", Jg));
+fprintf("--------------------------\n\n")
 
 
 
@@ -57,7 +62,7 @@ if strcmp(refFrame, "0")
 elseif strcmp(refFrame, "base")
     DH_table = myRobot.DH_table_base; 
 end
-[toolbox_dk, my_dk, toolbox_ee_pose, my_ee_pose] = checkDirectKinematics(robot, config, T, refFrame);
+[toolbox_dk, my_dk, toolbox_ee_pose, my_ee_pose] = checkDirectKinematics(robot, myRobot, config, T, refFrame);
 fprintf("\n------------------\n");
 fprintf("[CheckDirect] Checking the direct kinematics computation, considering "+...
         "the given joint configuration\n");
@@ -66,7 +71,6 @@ fprintf("[CheckDirect] Given joint parameters -> [%.3f %.3f %.3f]\n", config.Joi
 fprintf("[CheckDirect] Toolbox -> [%.3f %.3f %.3f]\n",  toolbox_ee_pose);
 fprintf("[CheckDirect] Computed -> "); disp(vpa(my_ee_pose.', 3));
 fprintf("------------------\n\n");
-
 
 
 %Check the inverse kinematics computation
@@ -84,7 +88,7 @@ for i=1:numTries
     %limtis!!!
     randomConf = getRandomConfigurationRight(robot, jointLimits); %my function!
     
-    [~, ~, goalPose, ~] = checkDirectKinematics(robot, randomConf, T, refFrame);
+    [~, ~, goalPose, ~] = checkDirectKinematics(robot, myRobot, randomConf, T, refFrame);
     my_joints = checkInverseKinematics(goalPose, ik_joints);
 
     %There could be multiple IK solutions
@@ -99,7 +103,7 @@ for i=1:numTries
             currentConf(2).JointPosition = double(my_joints(k,2));
             currentConf(3).JointPosition = double(my_joints(k,3));
 
-            [~, ~, computedPoseFromJointParams, ~] = checkDirectKinematics(robot, currentConf, T, refFrame);
+            [~, ~, computedPoseFromJointParams, ~] = checkDirectKinematics(robot, myRobot, currentConf, T, refFrame);
             fprintf("[CheckInverse] Direct kinematics from the (%d) joint params -> [%.3f %.3f %.3f]\n", k, computedPoseFromJointParams);
 
             maxScore = maxScore + 1;
@@ -120,17 +124,10 @@ fprintf("------------------\n");
 if strcmp(refFrame, "0")
     fprintf("\n------------------\n");
     fprintf("Considered Robot configuration -> [%.2f %.2f %.2f]\n", config.JointPosition);
-    Jg_toolbox_base = getGeometricJacobianRight(robot, config, "ee");
-    
-    T_base_to_0 = myRobot.T_base_to_0_DH; %retrive (DH) transf. from ∑base to ∑0
-    T_0_to_base = inv(T_base_to_0);
-    R_0_to_base = T_0_to_base(1:3,1:3);
-    T_jacobians = [R_0_to_base  , zeros(3)  ;
-                   zeros(3)     , R_0_to_base    ];
-
-    Jg_toolbox_zero = vpa(subs(T_jacobians*Jg_toolbox_base, [L0],[0.4]), 3);
+    Jg_toolbox_zero = getGeometricJacobianRight(myRobot, robot, config, "0", "ee");
+   
     fprintf("\nToolbox Jg wrt ∑0:\n");
-    disp(Jg_toolbox_zero)
+    disp(vpa(Jg_toolbox_zero,3))
     
     fprintf("Computed Jg wrt ∑0:\n");
     Jg_computed = vpa(subs(Jg, [L0 L2 L3 L4 d1(t) theta2(t) d3(t)], [0.4,0.4,0.3,0.4,config.JointPosition]), 5);
@@ -141,7 +138,7 @@ elseif strcmp(refFrame, "base")
     fprintf("\n------------------\n");
     fprintf("Checking the Geometric Jacobian...\n");
     fprintf("Considered Robot configuration -> [%.2f %.2f %.2f]\n", config.JointPosition);
-    Jg_toolbox = getGeometricJacobianRight(robot, config, "ee");
+    Jg_toolbox = getGeometricJacobianRight(myRobot, robot, config, "base", "ee");
     fprintf("\nToolbox Jg:\n");
     disp(Jg_toolbox)
 
